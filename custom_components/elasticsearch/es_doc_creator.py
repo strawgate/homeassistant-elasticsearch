@@ -1,4 +1,5 @@
 """Create Elasticsearch documents from Home Assistant events."""
+
 from datetime import datetime
 from math import isinf
 
@@ -13,6 +14,7 @@ from custom_components.elasticsearch.logger import LOGGER
 from custom_components.elasticsearch.system_info import SystemInfo
 
 ALLOWED_ATTRIBUTE_TYPES = tuple | dict | set | list | int | float | bool | str | None
+
 
 class DocumentCreator:
     """Create ES documents from Home Assistant state change events."""
@@ -36,23 +38,15 @@ class DocumentCreator:
         self._static_doc_properties = {
             "agent.name": "My Home Assistant",
             "agent.type": "hass",
-            "agent.version": system_info["version"]
-            if "version" in system_info
-            else "UNKNOWN",
+            "agent.version": system_info.get("version", "UNKNOWN"),
             "ecs.version": "1.0.0",
             "host.geo.location": {
                 "lat": hass_config.latitude,
-                "lon": hass_config.longitude
+                "lon": hass_config.longitude,
             },
-            "host.architecture": system_info["arch"]
-            if "arch" in system_info
-            else "UNKNOWN",
-            "host.os.name": system_info["os_name"]
-            if "os_name" in system_info
-            else "UNKNOWN",
-            "host.hostname": system_info["hostname"]
-            if "hostname" in system_info
-            else "UNKNOWN",
+            "host.architecture": system_info.get("arch", "UNKNOWN"),
+            "host.os.name": system_info.get("os_name", "UNKNOWN"),
+            "host.hostname": system_info.get("hostname", "UNKNOWN"),
             "tags": self._config.get(CONF_TAGS),
         }
 
@@ -73,7 +67,6 @@ class DocumentCreator:
         orig_attributes = dict(state.attributes)
         attributes = {}
         for orig_key, orig_value in orig_attributes.items():
-
             # Skip any attributes with invalid keys. Elasticsearch cannot index these.
             # https://github.com/legrego/homeassistant-elasticsearch/issues/96
             # https://github.com/legrego/homeassistant-elasticsearch/issues/192
@@ -94,7 +87,9 @@ class DocumentCreator:
             if not isinstance(orig_value, ALLOWED_ATTRIBUTE_TYPES):
                 LOGGER.debug(
                     "Not publishing attribute [%s] of disallowed type [%s] from entity [%s].",
-                    key, type(orig_value), state.entity_id
+                    key,
+                    type(orig_value),
+                    state.entity_id,
                 )
                 continue
 
@@ -122,7 +117,7 @@ class DocumentCreator:
             "attributes": attributes,
             "device": device,
             "value": _state,
-            "valueas": {}
+            "valueas": {},
         }
 
         """
@@ -139,7 +134,7 @@ class DocumentCreator:
             "@timestamp": time_tz,
             "hass.object_id": state.object_id,
             # new values below. Yes this is duplicitive in the short term.
-            "hass.entity": entity
+            "hass.entity": entity,
         }
 
         # We only include object_id, attributes, and domain in version 1
@@ -180,10 +175,16 @@ class DocumentCreator:
             elif isinstance(_state, str):
                 try:
                     # Create a datetime, date and time field if the string is a valid date
-                    document_body["hass.entity"]["valueas"]["datetime"] = datetime.fromisoformat(_state).isoformat()
+                    document_body["hass.entity"]["valueas"]["datetime"] = (
+                        datetime.fromisoformat(_state).isoformat()
+                    )
 
-                    document_body["hass.entity"]["valueas"]["date"] = datetime.fromisoformat(_state).date().isoformat()
-                    document_body["hass.entity"]["valueas"]["time"] = datetime.fromisoformat(_state).time().isoformat()
+                    document_body["hass.entity"]["valueas"]["date"] = (
+                        datetime.fromisoformat(_state).date().isoformat()
+                    )
+                    document_body["hass.entity"]["valueas"]["time"] = (
+                        datetime.fromisoformat(_state).time().isoformat()
+                    )
 
                 except ValueError:
                     document_body["hass.entity"]["valueas"] = {"string": _state}
@@ -202,7 +203,7 @@ class DocumentCreator:
             if deets.entity_area:
                 entity["area"] = {
                     "id": deets.entity_area.id,
-                    "name": deets.entity_area.name
+                    "name": deets.entity_area.name,
                 }
 
             if deets.device:
@@ -212,9 +213,8 @@ class DocumentCreator:
             if deets.device_area:
                 device["area"] = {
                     "id": deets.device_area.id,
-                    "name": deets.device_area.name
+                    "name": deets.device_area.name,
                 }
-
 
         if self._static_doc_properties is None:
             LOGGER.warning(
