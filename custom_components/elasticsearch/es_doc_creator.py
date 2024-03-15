@@ -5,6 +5,7 @@ from math import isinf
 
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import state as state_helper
+from homeassistant.util import dt as dt_util
 from pytz import utc
 
 from custom_components.elasticsearch.const import CONF_TAGS
@@ -133,7 +134,6 @@ class DocumentCreator:
         document_body = {
             "@timestamp": time_tz,
             "hass.object_id": state.object_id,
-            # new values below. Yes this is duplicitive in the short term.
             "hass.entity": entity,
         }
 
@@ -146,6 +146,7 @@ class DocumentCreator:
                     "hass.object_id_lower": state.object_id.lower(),
                     "hass.entity_id": state.entity_id,
                     "hass.entity_id_lower": state.entity_id.lower(),
+                    "hass.value": _state,
                 }
             )
             if (
@@ -174,16 +175,23 @@ class DocumentCreator:
                 document_body["hass.entity"]["valueas"] = {"float": _state}
             elif isinstance(_state, str):
                 try:
+                    parsed = dt_util.parse_datetime(_state)
+                    # TODO: More recent versions of HA allow us to pass `raise_on_error`.
+                    # We can remove this explicit `raise` once we update the minimum supported HA version.
+                    # parsed = dt_util.parse_datetime(_state, raise_on_error=True)
+                    if parsed is None:
+                        raise ValueError
+
                     # Create a datetime, date and time field if the string is a valid date
                     document_body["hass.entity"]["valueas"]["datetime"] = (
-                        datetime.fromisoformat(_state).isoformat()
+                        parsed.isoformat()
                     )
 
                     document_body["hass.entity"]["valueas"]["date"] = (
-                        datetime.fromisoformat(_state).date().isoformat()
+                        parsed.date().isoformat()
                     )
                     document_body["hass.entity"]["valueas"]["time"] = (
-                        datetime.fromisoformat(_state).time().isoformat()
+                        parsed.time().isoformat()
                     )
 
                 except ValueError:
