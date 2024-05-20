@@ -10,6 +10,7 @@ from homeassistant.helpers import (
     floor_registry,
     label_registry,
 )
+from homeassistant.helpers.typing import HomeAssistantType
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -80,7 +81,7 @@ async def test_entity_with_area(hass: HomeAssistant):
 
 @pytest.mark.asyncio
 async def test_entity_with_device(
-    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    hass: HomeAssistantType, mock_config_entry: MockConfigEntry
 ):
     """Entity with device returns details."""
     entity_area = area_registry.async_get(hass).async_create("entity area")
