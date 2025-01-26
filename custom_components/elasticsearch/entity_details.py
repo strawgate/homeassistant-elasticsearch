@@ -83,17 +83,17 @@ class ExtendedDeviceEntry:
             "labels": self.labels,
         }
 
-        if self.area is not None:
+        if thisarea := self.area:
             device["area"] = {
-                "id": self.area.id,
-                "name": self.area.name,
+                "id": thisarea.id,
+                "name": thisarea.name,
                 "floor": None,
             }
 
-        if self.floor is not None:
+        if thisfloor := self.floor:
             device["area"]["floor"] = {
-                "id": self.floor.floor_id,
-                "name": self.floor.name,
+                "id": thisfloor.floor_id,
+                "name": thisfloor.name,
             }
 
         return device
@@ -198,13 +198,17 @@ class ExtendedRegistryEntry:
             "unit_of_measurement": self.unit_of_measurement,
         }
 
-        if self.area is not None:
-            entity["area"] = {"id": self.area.id, "name": self.area.name, "floor": None}
+        if thisarea := self.area:
+            entity["area"] = {
+                "id": thisarea.id,
+                "name": thisarea.name,
+                "floor": None,
+            }
 
-        if self.floor is not None:
+        if thisfloor := self.floor:
             entity["area"]["floor"] = {
-                "id": self.floor.floor_id,
-                "name": self.floor.name,
+                "id": thisfloor.floor_id,
+                "name": thisfloor.name,
             }
 
         if self.device is not None:

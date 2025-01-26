@@ -15,7 +15,7 @@ def skip_dict_values(d: dict, skip_values: list[Any]) -> dict:
     return {k: v for k, v in d.items() if v not in skip_values}
 
 
-def keep_dict_keys(d: dict, keys: list[str] | None = None, prefixes: list[str] | None = None) -> dict:
+def keep_dict_keys(d: dict, keys: set[str] | None = None, prefixes: list[str] | None = None) -> dict:
     """Trim keys that match keep_keys. Works best on a flattened dict."""
 
     new_dict = {}
@@ -32,7 +32,7 @@ def keep_dict_keys(d: dict, keys: list[str] | None = None, prefixes: list[str] |
 def prepare_dict(
     d: dict,
     flatten: bool = True,
-    keep_keys: list[str] | None = None,
+    keep_keys: set[str] | None = None,
     skip_values: list[Any] | None = compconst.SKIP_VALUES,
 ) -> dict:
     """Clean a dictionary by flattening it, removing keys with empty values and optionally keeping only specified keys."""
@@ -46,19 +46,17 @@ def prepare_dict(
     return d  # noqa: RET504
 
 
-def flatten_dict(d: dict, parent_key: str = "", sep: str = ".") -> dict:
+def flatten_dict(d: dict, parent_key: str = "", new_dict=None) -> dict:
     """Flatten an n-level nested dictionary using periods."""
-
-    flattened_dict = {}
+    if new_dict is None:
+        new_dict = {}
 
     for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key != "" else k
+        new_key = f"{parent_key}.{k}" if parent_key != "" else k
 
         if isinstance(v, dict):
-            flattened_dict.update(
-                flatten_dict(d=v, parent_key=new_key, sep=sep),
-            )
+            flatten_dict(d=v, parent_key=new_key, new_dict=new_dict)
         else:
-            flattened_dict[new_key] = v
+            new_dict[new_key] = v
 
-    return flattened_dict
+    return new_dict

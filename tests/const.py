@@ -218,8 +218,8 @@ DEVICE_MATRIX_EXTRA = [
     ],
     False,
     [
-        "Device with name, area and labels",
-        "Device with name, area",
+        "Device with name and labels",
+        "Device with name and area",
     ],
 ]
 

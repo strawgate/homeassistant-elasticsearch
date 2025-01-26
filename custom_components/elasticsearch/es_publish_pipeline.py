@@ -28,7 +28,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry, device_registry, entity_registry, label_registry
-from homeassistant.helpers import state as state_helper
 from homeassistant.util import dt as dt_util
 from homeassistant.util.logging import async_create_catching_coro
 
@@ -65,14 +64,15 @@ if TYPE_CHECKING:  # pragma: no cover
 
 ALLOWED_ATTRIBUTE_KEY_TYPES = str
 ALLOWED_ATTRIBUTE_VALUE_TYPES = tuple | dict | set | list | int | float | bool | str | None
-SKIP_ATTRIBUTES = [
-    "friendly_name",
-    "entity_picture",
-    "icon",
-    "device_class",
-    "state_class",
-    "unit_of_measurement",
-]
+SKIP_ATTRIBUTES = frozenset(
+    {"friendly_name", "entity_picture", "icon", "device_class", "state_class", "unit_of_measurement", ""}
+)
+ON_STATES = frozenset({STATE_ON, STATE_LOCKED, STATE_ABOVE_HORIZON, STATE_OPEN, STATE_HOME})
+OFF_STATES = frozenset(
+    {STATE_OFF, STATE_UNLOCKED, STATE_BELOW_HORIZON, STATE_UNKNOWN, STATE_CLOSED, STATE_NOT_HOME}
+)
+
+ONOFF_STATES = frozenset({*ON_STATES, *OFF_STATES})
 
 
 class EventQueue(asyncio.Queue[tuple[datetime, State, StateChangeType]]):
@@ -556,21 +556,29 @@ class Pipeline:
 
             attributes = {}
 
-            for key, value in state.attributes.items():
-                if not self.filter_attribute(state.entity_id, key, value):
+            for name, value in state.attributes.items():
+                if not self._attribute_passes_filter(state.entity_id, name, value):
                     continue
 
-                new_key = self.normalize_attribute_name(key)
+                normalized_name = self.normalize_attribute_name(name)
 
-                if new_key in attributes:
+                if normalized_name in attributes:
                     self._logger.warning(
-                        "Attribute [%s] shares a key [%s] with another attribute for entity [%s]. Discarding previous attribute value.",
-                        key,
-                        new_key,
+                        "Attribute [%s] shares a name [%s] with another attribute for entity [%s]. Discarding previous attribute value.",
+                        name,
+                        normalized_name,
                         state.entity_id,
                     )
 
-                attributes[new_key] = convert_set_to_list(value)
+                if normalized_name == "":
+                    self._logger.warning(
+                        "Attribute [%s] for entity [%s] has been normalized to an empty string. Discarding attribute.",
+                        name,
+                        state.entity_id,
+                    )
+                    continue
+
+                attributes[normalized_name] = convert_set_to_list(value)
 
             return attributes
 
@@ -578,15 +586,15 @@ class Pipeline:
             """Coerce the state value into a dictionary of possible types."""
             value: str = state.state
 
-            success, result = self.try_state_as_boolean(state)
+            success, result = self.try_state_as_boolean(value)
             if success and result is not None:
                 return {"boolean": result}
 
-            success, result = self.try_state_as_number(state)
+            success, result = self.try_state_as_number(value)
             if success and result is not None:
                 return {"float": result}
 
-            success, result = self.try_state_as_datetime(state)
+            success, result = self.try_state_as_datetime(value)
             if success and result is not None:
                 return {
                     "datetime": result.isoformat(),
@@ -599,13 +607,13 @@ class Pipeline:
         # Static converter helpers
 
         @staticmethod
-        @lru_cache(maxsize=128)
         def sanitize_domain(domain: str) -> str:
             """Sanitize the domain name."""
             # Only allow alphanumeric characters a-z 0-9 and underscores
             return re.sub(r"[^a-z0-9_]", "", domain.lower())[0:128]
 
         @staticmethod
+        @lru_cache(maxsize=128)
         def domain_to_datastream(domain: str) -> dict:
             """Convert the state into a datastream."""
             return {
@@ -616,27 +624,31 @@ class Pipeline:
                 "data_stream.namespace": DATASTREAM_NAMESPACE,
             }
 
-        def filter_attribute(self, entity_id, key, value) -> bool:
-            """Filter out attributes we don't want to publish."""
+        def _reject_debug(self, base_message, message: str) -> bool:
+            """Help handle logging for cases where a filter results in rejection of the entity state update."""
 
-            def reject(msg: str) -> bool:
-                if self._debug_attribute_filtering:
-                    message = f"Filtering attributes for entity [{entity_id}]: Attribute [{key}] " + msg
-                    self._logger.debug(message)
-
+            if not self._debug_attribute_filtering:
                 return False
 
+            message = base_message + " Rejected: " + message
+            self._logger.debug(message)
+
+            return False
+
+        def _attribute_passes_filter(self, entity_id, key, value) -> bool:
+            """Filter out attributes we don't want to publish."""
+            base_msg = f"Filtering attributes for entity [{entity_id}]: Attribute [{key}]: "
+
             if key in SKIP_ATTRIBUTES:
-                return reject("is in the list of attributes to skip.")
+                return self._reject_debug(base_msg, "is in the list of attributes to skip.")
 
             if not isinstance(key, ALLOWED_ATTRIBUTE_KEY_TYPES):
-                return reject(f"has a disallowed key type [{type(key)}].")
+                return self._reject_debug(base_msg, f"has disallowed key type [{type(key)}].")
 
             if not isinstance(value, ALLOWED_ATTRIBUTE_VALUE_TYPES):
-                return reject(f"with value [{value}] has disallowed value type [{type(value)}].")
-
-            if key.strip() == "":
-                return reject("is empty after stripping leading and trailing whitespace.")
+                return self._reject_debug(
+                    base_msg, f"with value [{value}] has disallowed value type [{type(value)}]."
+                )
 
             return True
 
@@ -654,78 +666,38 @@ class Pipeline:
             # Remove leading and trailing underscores
             replaced_string = re.sub(r"^_+|_+$", "", replaced_string)
 
-            return replaced_string.lower()
+            return replaced_string.strip().lower()
 
         # Methods for value coercion
-        @classmethod
-        def try_state_as_number(cls, state: State) -> tuple[bool, float | None]:
+        def try_state_as_number(self, state_value: str) -> tuple[bool, float | None]:
             """Try to coerce our state to a number and return true if we can, false if we can't."""
             try:
-                return True, cls.state_as_number(state)
+                result = float(state_value)
+
             except ValueError:
                 return False, None
 
-        @classmethod
-        def state_as_number(cls, state: State) -> float:
-            """Try to coerce our state to a number."""
+            if isinf(result) or isnan(result):
+                return False, None
 
-            number = state_helper.state_as_number(state)
+            return True, result
 
-            if isinf(number) or isnan(number):
-                msg = "Could not coerce state to a number."
-                raise ValueError(msg)
-
-            return number
-
-        @classmethod
-        def try_state_as_boolean(cls, state: State) -> tuple[bool, bool | None]:
+        def try_state_as_boolean(self, state_value: str) -> tuple[bool, bool | None]:
             """Try to coerce our state to a boolean and return true if we can, false if we can't."""
-            try:
-                return True, cls.state_as_boolean(state)
-            except ValueError:
+            if state_value not in ONOFF_STATES:
                 return False, None
 
-        @classmethod
-        def state_as_boolean(cls, state: State) -> bool:
-            """Try to coerce our state to a boolean."""
-            # copied from helper state_as_number function
-            if state.state in (
-                "true",
-                STATE_ON,
-                STATE_LOCKED,
-                STATE_ABOVE_HORIZON,
-                STATE_OPEN,
-                STATE_HOME,
-            ):
-                return True
-            if state.state in (
-                "false",
-                STATE_OFF,
-                STATE_UNLOCKED,
-                STATE_UNKNOWN,
-                STATE_BELOW_HORIZON,
-                STATE_CLOSED,
-                STATE_NOT_HOME,
-            ):
-                return False
+            return True, state_value in ON_STATES
 
-            msg = "Could not coerce state to a boolean."
-            raise ValueError(msg)
-
-        @classmethod
-        def try_state_as_datetime(cls, state: State) -> tuple[bool, datetime | None]:
+        def try_state_as_datetime(self, state_value: str) -> tuple[bool, datetime | None]:
             """Try to coerce our state to a datetime and return True if we can, false if we can't."""
 
-            try:
-                return True, cls.state_as_datetime(state)
-            except ValueError:
-                return False, None
+            result = dt_util.parse_datetime(dt_str=state_value, raise_on_error=False)
 
-        @classmethod
-        def state_as_datetime(cls, state: State) -> datetime:
-            """Try to coerce our state to a datetime."""
+            if result is not None:
+                return True, result
 
-            return dt_util.parse_datetime(state.state, raise_on_error=True)
+            return False, None
 
     class Publisher:
         """Publishes documents to Elasticsearch."""
